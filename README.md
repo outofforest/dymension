@@ -178,3 +178,21 @@ Malicious sequencer could send different set of operations to different nodes.
 In discussed setup it's possible because sequencer is a trusted party.
 Full nodes might detect this, if they start receiving different sets of operations from connected peers,
 being correctly signed by the sequencer.
+
+## Metrics
+
+The most important pair of metric is:
+- operation generation rate on the sequencer
+- operation applying rate on full nodes
+
+If they don't match, it means processing is slower than generation and system is never going to synchronize.
+
+Timestamp could be added to each operation to track the propagation time from sequencer to each full node.
+This metric is vulnerable to clock synchronization offsets but still might give some useful insights
+if compared relatively between different full nodes.
+
+Some set of metrics might be useful to improve the design:
+- time spent on receiving data
+- time spent on verifying data integrity
+- time spent on storing updates on disk
+- time spent on broadcasting the data
