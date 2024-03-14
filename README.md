@@ -135,6 +135,21 @@ There is a trade-off between scalability and latency. Introducing intermediate n
 because there are more hops between the sequencer and full nodes. Each hop introduces delay caused by the processing time
 required to receive, verify and broadcast the data.
 
+## Performance
+
+Nodes communicate using TCP/IP protocol. It is essential to set as big as possible TCP window to improve the latency.
+Also, each `send`and `receive` operation on TCP sockets leads to a system `syscall` being made to copy th buffers.
+This operation is always expensive. It is essential to group those socket operations into batches, to minimize
+the number of syscalls. It is done using ring buffers.
+
+There is common pattern of processing such data streams:
+1. receive data
+2. validate data
+3. process data
+4. broadcast data
+
+Each step should be executed in parallel, forming a pipe.
+
 ## Security
 
 ### Data integrity
