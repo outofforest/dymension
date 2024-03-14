@@ -1,7 +1,5 @@
 # Dymension
 
-The problem to solve is defined in [description.pdf](description.pdf) file.
-
 ## Data store
 
 The goal of the task is to design mechanism for synchronizing decentralized data storage.
