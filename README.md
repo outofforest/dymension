@@ -30,7 +30,7 @@ At the top, root node exists, containing the hash of the entire merkle tree.
 Also, the list of all the root hashes must be stored, to be able to prove the data integrity
 from the genesis state.
 
-## Sequencer operation
+## Operation
 
 Operation is a request to update the data store, produced by the sequencer every 0.2 seconds.
 In the spec the term block is used for this purpose, but it collides with the same term I used above.
@@ -40,17 +40,33 @@ to observe two operations in the same batch touching the same data block.
 
 Each operation broadcasted by a sequencer modifies some number of consequtive bytes in a single block.
 The operation consists of:
+- batch sequence (height)
+- operation sequence in a batch (number from 0 to 149)
 - block index
 - offset in the block
 - bytes to write (only the modified ones, not the entire data block)
-- signature of the entire block (after the operation) 
+- signature of all the above fields made using sequencer's private key
 
 When the operation defined this way is executed by the full node:
-1. block is read from the device (`seek` + `read`) and stored in the memory (4KB of data)
-2. appropriate bytes are modified
-3. sequencer's signature is verified using its public key 
+1. signature, batch sequence and operation sequence are verified
+2. block is read from the device (`seek` + `read`) and stored in the memory (4KB of data)
+3. appropriate bytes are modified
 4. block is written to the block device (`write`)
-5. appropriate nodes in the merkle tree are recalculated
+5. hash of the data block in the corresponding leaf node of the merkle tree is updated
+6. leaf node of the merkle tree is marked as dirty
+
+## End of batch
+
+When batch is going to be finalized (all the operations has been broadcasted), sequencer broadcasts the commit message containing:
+- batch sequence (height)
+- hash of the merkle root
+- signature of all the above fields made using sequencer's private key
+
+When the commit message is processed by the full node:
+- signature is verified
+- all the dirty nodes inside merkle tree are recalculated up to the root node
+- hash of the root node is compared to the one communicated inside the commit message
+- read-only snapshot of the data is taken to serve light client requests
 
 ## Light client queries
 
@@ -82,3 +98,70 @@ To do that efficiently, the mechanism of snapshots must be implemented. Snapshot
 so I'm only mentioning here that BTRFS and ZFS filesystems are the good implementations.
 For the purpose of this example, the data blob could be stored on such filesystem and snapshot could be taken every 150 operations
 and mounted to serve the queries coming from the light clients.
+
+## Synchronization
+
+When not synchronized full node connects to the sequencer:
+1. full nodes communicates the latest synchronized batch
+2. sequencer computes the diff between reported batch and the latest ones and sends it to the full node
+3. changes are applied
+4. hash of the merkle tree is compared to the expected one
+
+Probably it happens that in meantime, new batches are produced. It means that process must be repeated in a loop
+until real-time data cover all the expected updates.
+
+Obviously, if the process of synchronization is slower than the process of producing new batches then
+full node won't be able to synchronize its state.
+
+## Scalability
+
+Sequencer communicates updates using unicast channel connected to each full node.
+It means that, while number of full nodes grows, the bandwidth available to the sequencer saturates quickly.
+
+To mitigate this, the network of distribution nodes might be created. In this scheme
+sequencer broadcasts data to those distribution nodes, and they send data further to the full nodes.
+Distribution nodes should be allocated across the world to allow full nodes to find the fastest one.
+
+Many layers of distribution nodes might be created, or in extreme case, each full node might be a distribution node.
+In this case all the full nodes form a mesh network.
+
+In setups described above sequencer still must send the complete set of data to every node connected to it directly.
+Alternatively, it could send a subset of operations to every connected node, saving on bandwidth.
+In this case, full nodes must be connected to many distributed nodes to receive the full set of operations.
+In this setup, the sequence of operations is no longer guaranteed by the TCP protocol, so operations must be cached, sorted
+and processed in order.
+
+## Latency
+
+There is a trade-off between scalability and latency. Introducing intermediate nodes, increases latency
+because there are more hops between the sequencer and full nodes. Each hop introduces delay caused by the processing time
+required to receive, verify and broadcast the data.
+
+## Security
+
+### Data integrity
+
+All the data broadcasted by the sequencer are signed using its private key. Sequencer's public key
+is publicly known so al the full nodes might verify that data are legit even if they are received from some
+intermediate node.
+
+Obviously the sequencer is the source of the ground truth, meaning that its maintainer
+may recalculate all the past batches and create new valid signatures. To mitigate it, the sequencer should be built out
+of many nodes which must agree on signing data using some consensus protocol like pBFT.
+
+### Liveness
+
+It might happen that malicious intermediate node stops broadcasting the data.
+To mitigate this full nodes and light clients should connect to many peers.
+To save on bandwidth, connected peers could work in two modes: primary and secondary.
+In primary mode, peer sends all the data. In secondary mode, peer might send only some headers
+to notify others that operations are streamed.
+
+By doing this, in case of malicious primary peer, connected nodes knows that data mnight be requested from other nodes.
+
+### Network partitioning
+
+Malicious sequencer could send different set of operations to different nodes.
+In discussed setup it's possible because sequencer is a trusted party.
+Full nodes might detect this, if they start receiving different sets of operations from connected peers,
+being correctly signed by the sequencer.
